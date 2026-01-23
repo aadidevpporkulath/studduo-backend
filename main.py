@@ -19,13 +19,20 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
     logger.info("Starting StudduoAI API...")
-    await init_db()
-    logger.info("Database initialized")
+    try:
+        await init_db()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.warning(f"Database initialization warning: {e}")
+    
     logger.info(f"Vector store directory: {settings.chroma_persist_dir}")
     logger.info(f"Knowledge directory: {settings.knowledge_dir}")
+    logger.info("API startup complete")
+    
     yield
+    
     # Shutdown
-    logger.info("Shutting down NoteGPT API...")
+    logger.info("Shutting down StudduoAI API...")
 
 
 # Create FastAPI app
