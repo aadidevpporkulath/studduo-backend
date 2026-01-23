@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
-    logger.info("Starting StadduoAI API...")
+    logger.info("Starting StudduoAI API...")
     await init_db()
     logger.info("Database initialized")
     logger.info(f"Vector store directory: {settings.chroma_persist_dir}")
