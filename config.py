@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     firebase_credentials_path: str = "./firebase-credentials.json"
 
     # Database
-    database_url: str = "sqlite+aiosqlite:///./notegpt.db"
+    database_url: str = "sqlite+aiosqlite:///./studduoai.db"
 
     # ChromaDB
     chroma_persist_dir: str = "./chroma_db"

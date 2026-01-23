@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="NoteGPT API",
+    title="StudduoAI API",
     description="Multi-domain RAG-based tutoring chatbot for student learning with teaching-focused responses",
     version="1.0.0",
     lifespan=lifespan
@@ -55,7 +55,7 @@ app.include_router(admin_router)
 async def root():
     """Root endpoint."""
     return {
-        "message": "Welcome to NoteGPT API",
+        "message": "Welcome to StudduoAI API",
         "version": "1.0.0",
         "docs": "/docs",
         "health": "/api/admin/health"
@@ -65,7 +65,7 @@ async def root():
 @app.get("/api/health")
 async def health():
     """Simple health check."""
-    return {"status": "healthy", "service": "notegpt-api"}
+    return {"status": "healthy", "service": "studduo-api"}
 
 
 if __name__ == "__main__":
