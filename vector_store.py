@@ -16,25 +16,46 @@ class VectorStore:
     """ChromaDB vector store for document embeddings."""
 
     def __init__(self):
-        # Use free local embeddings model (no API quota limits)
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",  # Fast, efficient, free
-            encode_kwargs={"normalize_embeddings": True}
-        )
-        logger.info(
-            "Using HuggingFace embeddings (free, local, no quota limits)")
+        # Lazy initialization - embeddings model loads on first use
+        self.embeddings = None
+        self.client = None
+        self.collection = None
+        self.collection_name = "notegpt_documents"
+        self.query_embedding_cache: Dict[str, List[float]] = {}
+        self._initialized = False
+
+    def _initialize(self):
+        """Lazy initialization of embeddings and ChromaDB."""
+        if self._initialized:
+            return
+        
+        logger.info("Initializing vector store...")
+        
+        # Load embeddings model (this may take a moment)
+        try:
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name="all-MiniLM-L6-v2",
+                encode_kwargs={"normalize_embeddings": True}
+            )
+            logger.info("HuggingFace embeddings loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load embeddings: {e}")
+            raise
 
         # Initialize ChromaDB client
-        self.client = chromadb.PersistentClient(
-            path=settings.chroma_persist_dir,
-            settings=ChromaSettings(
-                anonymized_telemetry=False,
-                allow_reset=True
+        try:
+            self.client = chromadb.PersistentClient(
+                path=settings.chroma_persist_dir,
+                settings=ChromaSettings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
+                )
             )
-        )
+        except Exception as e:
+            logger.error(f"Failed to initialize ChromaDB client: {e}")
+            raise
 
         # Get or create collection
-        self.collection_name = "notegpt_documents"
         try:
             self.collection = self.client.get_collection(
                 name=self.collection_name
@@ -46,12 +67,15 @@ class VectorStore:
                 metadata={"hnsw:space": "cosine"}
             )
             logger.info(f"Created new collection: {self.collection_name}")
-
-        # Cache for query embeddings to avoid recalculation
+        
+        self._initialized = True
+        logger.info("Vector store initialized successfully")
         self.query_embedding_cache: Dict[str, List[float]] = {}
 
     def add_documents(self, documents: List[Dict[str, Any]]) -> None:
         """Add documents to the vector store."""
+        self._initialize()  # Ensure initialized
+        
         if not documents:
             logger.warning("No documents to add")
             return
@@ -123,6 +147,8 @@ class VectorStore:
         filter_metadata: Optional[Dict] = None
     ) -> List[Dict[str, Any]]:
         """Search for similar documents with embedding caching."""
+        self._initialize()  # Ensure initialized
+        
         if k is None:
             k = settings.top_k_results
 
@@ -152,10 +178,11 @@ class VectorStore:
                     "distance": results['distances'][0][i] if results['distances'] else None
                 })
 
-        return documents
+return documents
 
     def delete_collection(self) -> None:
         """Delete the entire collection."""
+        self._initialize()  # Ensure initialized
         try:
             self.client.delete_collection(name=self.collection_name)
             logger.info(f"Deleted collection: {self.collection_name}")
@@ -164,6 +191,7 @@ class VectorStore:
 
     def get_collection_stats(self) -> Dict[str, Any]:
         """Get statistics about the collection."""
+        self._initialize()  # Ensure initialized
         count = self.collection.count()
         return {
             "collection_name": self.collection_name,
