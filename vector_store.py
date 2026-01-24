@@ -178,7 +178,7 @@ class VectorStore:
                     "distance": results['distances'][0][i] if results['distances'] else None
                 })
 
-return documents
+        return documents
 
     def delete_collection(self) -> None:
         """Delete the entire collection."""
