@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional
 import logging
 from datetime import datetime
 import uuid
+import asyncio
 
 from firebase_admin import firestore
 from config import settings
@@ -39,10 +40,13 @@ class FirestoreDB:
         }
 
         try:
-            # Store in: users/{user_id}/conversations/{conversation_id}
-            db.collection("users").document(user_id).collection(
-                CONVERSATIONS_COLLECTION
-            ).document(conversation_id).set(conversation_data)
+            # Wrap synchronous Firestore operation in thread
+            def _create_conv():
+                db.collection("users").document(user_id).collection(
+                    CONVERSATIONS_COLLECTION
+                ).document(conversation_id).set(conversation_data)
+            
+            await asyncio.to_thread(_create_conv)
 
             logger.info(
                 f"Created conversation {conversation_id} for user {user_id}")
@@ -71,24 +75,28 @@ class FirestoreDB:
         }
 
         try:
-            # Store in: users/{user_id}/conversations/{conversation_id}/messages/{message_id}
-            db.collection("users").document(user_id).collection(
-                CONVERSATIONS_COLLECTION
-            ).document(conversation_id).collection(MESSAGES_COLLECTION).document(
-                message_id
-            ).set(message_data)
+            # Wrap synchronous Firestore operations in thread
+            def _save_msg():
+                # Store in: users/{user_id}/conversations/{conversation_id}/messages/{message_id}
+                db.collection("users").document(user_id).collection(
+                    CONVERSATIONS_COLLECTION
+                ).document(conversation_id).collection(MESSAGES_COLLECTION).document(
+                    message_id
+                ).set(message_data)
 
-            # Update conversation's updated_at and message_count
-            conversation_ref = (
-                db.collection("users")
-                .document(user_id)
-                .collection(CONVERSATIONS_COLLECTION)
-                .document(conversation_id)
-            )
-            conversation_ref.update({
-                "updated_at": datetime.utcnow(),
-                "message_count": firestore.Increment(1),
-            })
+                # Update conversation's updated_at and message_count
+                conversation_ref = (
+                    db.collection("users")
+                    .document(user_id)
+                    .collection(CONVERSATIONS_COLLECTION)
+                    .document(conversation_id)
+                )
+                conversation_ref.update({
+                    "updated_at": datetime.utcnow(),
+                    "message_count": firestore.Increment(1),
+                })
+            
+            await asyncio.to_thread(_save_msg)
 
             logger.info(
                 f"Saved message {message_id} to conversation {conversation_id}")
@@ -105,18 +113,22 @@ class FirestoreDB:
     ) -> List[Dict[str, Any]]:
         """Get all messages in a conversation."""
         try:
-            messages_ref = (
-                db.collection("users")
-                .document(user_id)
-                .collection(CONVERSATIONS_COLLECTION)
-                .document(conversation_id)
-                .collection(MESSAGES_COLLECTION)
-                .order_by("timestamp")
-                .limit(limit)
-            )
+            # Wrap synchronous Firestore operations in thread
+            def _get_messages():
+                messages_ref = (
+                    db.collection("users")
+                    .document(user_id)
+                    .collection(CONVERSATIONS_COLLECTION)
+                    .document(conversation_id)
+                    .collection(MESSAGES_COLLECTION)
+                    .order_by("timestamp")
+                    .limit(limit)
+                )
 
-            docs = messages_ref.stream()
-            messages = [doc.to_dict() for doc in docs]
+                docs = messages_ref.stream()
+                return [doc.to_dict() for doc in docs]
+            
+            messages = await asyncio.to_thread(_get_messages)
 
             logger.info(
                 f"Retrieved {len(messages)} messages from conversation {conversation_id}")
@@ -132,44 +144,50 @@ class FirestoreDB:
     ) -> List[Dict[str, Any]]:
         """Get all conversations for a user."""
         try:
-            conversations_ref = (
-                db.collection("users")
-                .document(user_id)
-                .collection(CONVERSATIONS_COLLECTION)
-                .order_by("updated_at", direction=firestore.Query.DESCENDING)
-                .limit(limit)
-            )
-
-            docs = conversations_ref.stream()
-            conversations = []
-
-            for doc in docs:
-                conv_data = doc.to_dict()
-                # Get last message
-                messages_ref = (
+            # Wrap synchronous Firestore operations in thread
+            def _get_conversations():
+                conversations_ref = (
                     db.collection("users")
                     .document(user_id)
                     .collection(CONVERSATIONS_COLLECTION)
-                    .document(conv_data["id"])
-                    .collection(MESSAGES_COLLECTION)
-                    .order_by("timestamp", direction=firestore.Query.DESCENDING)
-                    .limit(1)
+                    .order_by("updated_at", direction=firestore.Query.DESCENDING)
+                    .limit(limit)
                 )
 
-                last_msg_docs = messages_ref.stream()
-                last_message = ""
+                docs = conversations_ref.stream()
+                conversations = []
 
-                for msg_doc in last_msg_docs:
-                    last_message = msg_doc.to_dict().get("content", "")[:100]
+                for doc in docs:
+                    conv_data = doc.to_dict()
+                    # Get last message
+                    messages_ref = (
+                        db.collection("users")
+                        .document(user_id)
+                        .collection(CONVERSATIONS_COLLECTION)
+                        .document(conv_data["id"])
+                        .collection(MESSAGES_COLLECTION)
+                        .order_by("timestamp", direction=firestore.Query.DESCENDING)
+                        .limit(1)
+                    )
 
-                conversations.append({
-                    "conversation_id": conv_data["id"],
-                    "title": conv_data.get("title", "Conversation"),
-                    "last_message": last_message,
-                    "message_count": conv_data.get("message_count", 0),
-                    "created_at": conv_data.get("created_at"),
-                    "updated_at": conv_data.get("updated_at"),
-                })
+                    last_msg_docs = messages_ref.stream()
+                    last_message = ""
+
+                    for msg_doc in last_msg_docs:
+                        last_message = msg_doc.to_dict().get("content", "")[:100]
+
+                    conversations.append({
+                        "conversation_id": conv_data["id"],
+                        "title": conv_data.get("title", "Conversation"),
+                        "last_message": last_message,
+                        "message_count": conv_data.get("message_count", 0),
+                        "created_at": conv_data.get("created_at"),
+                        "updated_at": conv_data.get("updated_at"),
+                    })
+
+                return conversations
+            
+            conversations = await asyncio.to_thread(_get_conversations)
 
             logger.info(
                 f"Retrieved {len(conversations)} conversations for user {user_id}")
@@ -186,28 +204,45 @@ class FirestoreDB:
     ) -> str:
         """Get existing conversation or create new one."""
         try:
-            if conversation_id:
-                # Check if conversation exists
-                conv_ref = (
-                    db.collection("users")
-                    .document(user_id)
-                    .collection(CONVERSATIONS_COLLECTION)
-                    .document(conversation_id)
-                )
-                conv_doc = conv_ref.get()
+            # Wrap synchronous Firestore operations in thread
+            def _get_or_create():
+                if conversation_id:
+                    # Check if conversation exists
+                    conv_ref = (
+                        db.collection("users")
+                        .document(user_id)
+                        .collection(CONVERSATIONS_COLLECTION)
+                        .document(conversation_id)
+                    )
+                    conv_doc = conv_ref.get()
 
-                if conv_doc.exists:
-                    # Update updated_at
-                    conv_ref.update({"updated_at": datetime.utcnow()})
-                    return conversation_id
+                    if conv_doc.exists:
+                        # Update updated_at
+                        conv_ref.update({"updated_at": datetime.utcnow()})
+                        return conversation_id
 
-            # Create new conversation
-            new_conv_id = str(uuid.uuid4())
-            title = query[:50] + "..." if query and len(
-                query) > 50 else query or "New Conversation"
+                # Create new conversation
+                new_conv_id = str(uuid.uuid4())
+                title = query[:50] + "..." if query and len(
+                    query) > 50 else query or "New Conversation"
 
-            await FirestoreDB.create_conversation(user_id, title, new_conv_id)
-            return new_conv_id
+                new_conv_data = {
+                    "id": new_conv_id,
+                    "user_id": user_id,
+                    "title": title,
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow(),
+                    "message_count": 0,
+                }
+                
+                db.collection("users").document(user_id).collection(
+                    CONVERSATIONS_COLLECTION
+                ).document(new_conv_id).set(new_conv_data)
+                
+                return new_conv_id
+            
+            result = await asyncio.to_thread(_get_or_create)
+            return result
 
         except Exception as e:
             logger.error(f"Error getting/creating conversation: {str(e)}")
@@ -220,20 +255,24 @@ class FirestoreDB:
     ) -> bool:
         """Delete a conversation and all its messages."""
         try:
-            conv_ref = (
-                db.collection("users")
-                .document(user_id)
-                .collection(CONVERSATIONS_COLLECTION)
-                .document(conversation_id)
-            )
+            # Wrap synchronous Firestore operations in thread
+            def _delete():
+                conv_ref = (
+                    db.collection("users")
+                    .document(user_id)
+                    .collection(CONVERSATIONS_COLLECTION)
+                    .document(conversation_id)
+                )
 
-            # Delete all messages first
-            messages_ref = conv_ref.collection(MESSAGES_COLLECTION)
-            for doc in messages_ref.stream():
-                doc.reference.delete()
+                # Delete all messages first
+                messages_ref = conv_ref.collection(MESSAGES_COLLECTION)
+                for doc in messages_ref.stream():
+                    doc.reference.delete()
 
-            # Delete the conversation
-            conv_ref.delete()
+                # Delete the conversation
+                conv_ref.delete()
+            
+            await asyncio.to_thread(_delete)
 
             logger.info(
                 f"Deleted conversation {conversation_id} for user {user_id}")
@@ -249,26 +288,32 @@ class FirestoreDB:
     ) -> List[Dict[str, Any]]:
         """Search conversations by title or last message."""
         try:
-            conversations_ref = (
-                db.collection("users")
-                .document(user_id)
-                .collection(CONVERSATIONS_COLLECTION)
-                .order_by("updated_at", direction=firestore.Query.DESCENDING)
-            )
+            # Wrap synchronous Firestore operations in thread
+            def _search():
+                conversations_ref = (
+                    db.collection("users")
+                    .document(user_id)
+                    .collection(CONVERSATIONS_COLLECTION)
+                    .order_by("updated_at", direction=firestore.Query.DESCENDING)
+                )
 
-            all_convs = [doc.to_dict() for doc in conversations_ref.stream()]
+                all_convs = [doc.to_dict() for doc in conversations_ref.stream()]
 
-            # Client-side filtering for title matching
-            search_lower = search_query.lower()
-            filtered = [
-                conv
-                for conv in all_convs
-                if search_lower in conv.get("title", "").lower()
-            ]
+                # Client-side filtering for title matching
+                search_lower = search_query.lower()
+                filtered = [
+                    conv
+                    for conv in all_convs
+                    if search_lower in conv.get("title", "").lower()
+                ]
+
+                return filtered[:20]  # Return top 20
+            
+            filtered = await asyncio.to_thread(_search)
 
             logger.info(
                 f"Found {len(filtered)} conversations matching '{search_query}'")
-            return filtered[:20]  # Return top 20
+            return filtered
         except Exception as e:
             logger.error(f"Error searching conversations: {str(e)}")
             return []
@@ -281,26 +326,32 @@ class FirestoreDB:
     ) -> bool:
         """Update conversation title."""
         try:
-            conv_ref = (
-                db.collection("users")
-                .document(user_id)
-                .collection(CONVERSATIONS_COLLECTION)
-                .document(conversation_id)
-            )
+            # Wrap synchronous Firestore operations in thread
+            def _update():
+                conv_ref = (
+                    db.collection("users")
+                    .document(user_id)
+                    .collection(CONVERSATIONS_COLLECTION)
+                    .document(conversation_id)
+                )
 
-            conv_doc = conv_ref.get()
-            if not conv_doc.exists:
-                logger.warning(f"Conversation {conversation_id} not found")
-                return False
+                conv_doc = conv_ref.get()
+                if not conv_doc.exists:
+                    logger.warning(f"Conversation {conversation_id} not found")
+                    return False
 
-            conv_ref.update({
-                "title": new_title,
-                "updated_at": datetime.utcnow()
-            })
-
-            logger.info(
-                f"Updated conversation {conversation_id} title to '{new_title}'")
-            return True
+                conv_ref.update({
+                    "title": new_title,
+                    "updated_at": datetime.utcnow()
+                })
+                return True
+            
+            result = await asyncio.to_thread(_update)
+            
+            if result:
+                logger.info(
+                    f"Updated conversation {conversation_id} title to '{new_title}'")
+            return result
         except Exception as e:
             logger.error(f"Error updating conversation title: {str(e)}")
             return False
@@ -314,27 +365,33 @@ class FirestoreDB:
     ) -> bool:
         """Add feedback to a message (helpful/not_helpful)."""
         try:
-            message_ref = (
-                db.collection("users")
-                .document(user_id)
-                .collection(CONVERSATIONS_COLLECTION)
-                .document(conversation_id)
-                .collection(MESSAGES_COLLECTION)
-                .document(message_id)
-            )
+            # Wrap synchronous Firestore operations in thread
+            def _add_feedback():
+                message_ref = (
+                    db.collection("users")
+                    .document(user_id)
+                    .collection(CONVERSATIONS_COLLECTION)
+                    .document(conversation_id)
+                    .collection(MESSAGES_COLLECTION)
+                    .document(message_id)
+                )
 
-            msg_doc = message_ref.get()
-            if not msg_doc.exists:
-                logger.warning(f"Message {message_id} not found")
-                return False
+                msg_doc = message_ref.get()
+                if not msg_doc.exists:
+                    logger.warning(f"Message {message_id} not found")
+                    return False
 
-            message_ref.update({
-                "feedback": feedback,
-                "feedback_timestamp": datetime.utcnow()
-            })
-
-            logger.info(f"Added feedback to message {message_id}: {feedback}")
-            return True
+                message_ref.update({
+                    "feedback": feedback,
+                    "feedback_timestamp": datetime.utcnow()
+                })
+                return True
+            
+            result = await asyncio.to_thread(_add_feedback)
+            
+            if result:
+                logger.info(f"Added feedback to message {message_id}: {feedback}")
+            return result
         except Exception as e:
             logger.error(f"Error adding message feedback: {str(e)}")
             return False
@@ -346,36 +403,42 @@ class FirestoreDB:
     ) -> Optional[Dict[str, Any]]:
         """Get complete conversation with all messages for export."""
         try:
-            conv_ref = (
-                db.collection("users")
-                .document(user_id)
-                .collection(CONVERSATIONS_COLLECTION)
-                .document(conversation_id)
-            )
+            # Wrap synchronous Firestore operations in thread
+            def _get_for_export():
+                conv_ref = (
+                    db.collection("users")
+                    .document(user_id)
+                    .collection(CONVERSATIONS_COLLECTION)
+                    .document(conversation_id)
+                )
 
-            conv_doc = conv_ref.get()
-            if not conv_doc.exists:
-                logger.warning(f"Conversation {conversation_id} not found")
-                return None
+                conv_doc = conv_ref.get()
+                if not conv_doc.exists:
+                    logger.warning(f"Conversation {conversation_id} not found")
+                    return None
 
-            conv_data = conv_doc.to_dict()
+                conv_data = conv_doc.to_dict()
 
-            # Get all messages
-            messages_ref = (
-                db.collection("users")
-                .document(user_id)
-                .collection(CONVERSATIONS_COLLECTION)
-                .document(conversation_id)
-                .collection(MESSAGES_COLLECTION)
-                .order_by("timestamp")
-            )
+                # Get all messages
+                messages_ref = (
+                    db.collection("users")
+                    .document(user_id)
+                    .collection(CONVERSATIONS_COLLECTION)
+                    .document(conversation_id)
+                    .collection(MESSAGES_COLLECTION)
+                    .order_by("timestamp")
+                )
 
-            messages = [doc.to_dict() for doc in messages_ref.stream()]
+                messages = [doc.to_dict() for doc in messages_ref.stream()]
 
-            conv_data["messages"] = messages
-
-            logger.info(
-                f"Retrieved conversation {conversation_id} with {len(messages)} messages for export")
+                conv_data["messages"] = messages
+                return conv_data
+            
+            conv_data = await asyncio.to_thread(_get_for_export)
+            
+            if conv_data:
+                logger.info(
+                    f"Retrieved conversation {conversation_id} with {len(conv_data.get('messages', []))} messages for export")
             return conv_data
         except Exception as e:
             logger.error(f"Error retrieving conversation for export: {str(e)}")

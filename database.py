@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, String, Text, Integer, DateTime, JSON
+from sqlalchemy import Column, String, Text, Integer, DateTime, JSON, Boolean
 from datetime import datetime
 import uuid
 
@@ -33,7 +33,7 @@ class Conversation(Base):
     # explanation, plan, example, summary, problem_solving, quiz
     prompt_type = Column(String, default="explanation")
     # If True, won't be saved to Firestore
-    is_temporary = Column(String, default=False)
+    is_temporary = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow,
                         onupdate=datetime.utcnow)

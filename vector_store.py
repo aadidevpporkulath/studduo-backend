@@ -33,11 +33,14 @@ class VectorStore:
         
         # Load embeddings model (this may take a moment)
         try:
+            # Use smaller model for memory efficiency on Render (512MB limit)
+            # sentence-transformers/all-MiniLM-L6-v2 is ~90MB vs larger models
             self.embeddings = HuggingFaceEmbeddings(
                 model_name="all-MiniLM-L6-v2",
-                encode_kwargs={"normalize_embeddings": True}
+                encode_kwargs={"normalize_embeddings": True},
+                model_kwargs={"device": "cpu"},
             )
-            logger.info("HuggingFace embeddings loaded successfully")
+            logger.info("HuggingFace embeddings loaded successfully (all-MiniLM-L6-v2)")
         except Exception as e:
             logger.error(f"Failed to load embeddings: {e}")
             raise

@@ -88,20 +88,20 @@ Aim for clarity, honesty, and flow over perfection."""
     def _generate_follow_up_questions(self, query: str, response: str) -> List[str]:
         """Generate relevant follow-up questions."""
         try:
-            # Create more sophisticated follow-up questions
-            prompt = f"""You are a Socratic tutor helping a student learn deeper.
+            # Create specific, topic-focused follow-up questions
+            prompt = f"""You are a smart tutor helping a student go deeper into a topic.
 
 The student asked: "{query}"
 
-Your previous response explained: "{response[:600]}..."
+Your response explained: "{response[:600]}..."
 
-Generate 2 excellent follow-up questions that:
-1. Build on what was just explained (don't repeat the same topic)
-2. Encourage critical thinking and practical application
-3. Are specific and answerable (not vague)
-4. Match the student's apparent level of understanding
+Generate 2 great follow-up questions that:
+1. Explore a specific next step or deeper angle of the topic (not meta-questions)
+2. Are concrete and directly answerable (avoid asking about "process" or "learning style")
+3. Build naturally from what was explained
+4. Spark curiosity about the actual subject matter
 
-Format the questions naturally - just list them one per line with a "?" at the end, no numbering or bullet points."""
+Just list them one per line with "?" at the end. No numbering."""
 
             result = self.model.generate_content(prompt)
 
