@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 import logging
 
 from config import settings
-from database import init_db
 from routers import chat_router, admin_router
 
 logging.basicConfig(
@@ -19,15 +18,20 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
     logger.info("Starting StudduoAI API...")
+
+    # Pre-load vector store to avoid cold start on first request
+    logger.info("Pre-loading vector store and embeddings model...")
     try:
-        await init_db()
-        logger.info("Database initialized")
+        from vector_store import vector_store
+        await vector_store.initialize_async()
+        logger.info("Vector store pre-loaded successfully")
     except Exception as e:
-        logger.warning(f"Database initialization warning: {e}")
-    
+        logger.error(f"Failed to pre-load vector store: {e}")
+        logger.warning("Vector store will initialize on first request")
+
     logger.info(f"Vector store directory: {settings.chroma_persist_dir}")
     logger.info(f"Knowledge directory: {settings.knowledge_dir}")
-    logger.info("API startup complete")
+    logger.info("API startup complete - Ready for requests!")
     
     yield
     

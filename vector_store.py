@@ -1,6 +1,8 @@
 from typing import List, Dict, Any, Optional
 import logging
 import hashlib
+import asyncio
+import threading
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -13,23 +15,33 @@ logger = logging.getLogger(__name__)
 
 
 class VectorStore:
-    """ChromaDB vector store for document embeddings."""
+    """ChromaDB vector store for document embeddings with async support."""
 
-    def __init__(self):
-        # Lazy initialization - embeddings model loads on first use
+    def __init__(self, preload: bool = False):
+        # Eager or lazy initialization based on preload flag
         self.embeddings = None
         self.client = None
         self.collection = None
         self.collection_name = "notegpt_documents"
         self.query_embedding_cache: Dict[str, List[float]] = {}
         self._initialized = False
+        self._init_lock = threading.Lock()
+
+        if preload:
+            logger.info("Pre-loading vector store on startup...")
+            self._initialize()
 
     def _initialize(self):
-        """Lazy initialization of embeddings and ChromaDB."""
+        """Thread-safe initialization of embeddings and ChromaDB."""
         if self._initialized:
             return
-        
-        logger.info("Initializing vector store...")
+
+        with self._init_lock:
+            # Double-check after acquiring lock
+            if self._initialized:
+                return
+
+            logger.info("Initializing vector store...")
         
         # Load embeddings model (this may take a moment)
         try:
@@ -74,6 +86,11 @@ class VectorStore:
         self._initialized = True
         logger.info("Vector store initialized successfully")
         self.query_embedding_cache: Dict[str, List[float]] = {}
+
+    async def initialize_async(self):
+        """Async initialization wrapper for startup."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._initialize)
 
     def add_documents(self, documents: List[Dict[str, Any]]) -> None:
         """Add documents to the vector store."""
@@ -183,6 +200,16 @@ class VectorStore:
 
         return documents
 
+    async def similarity_search_async(
+        self,
+        query: str,
+        k: int = None,
+        filter_metadata: Optional[Dict] = None
+    ) -> List[Dict[str, Any]]:
+        """Async version of similarity search for better concurrency."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.similarity_search, query, k, filter_metadata)
+
     def delete_collection(self) -> None:
         """Delete the entire collection."""
         self._initialize()  # Ensure initialized
@@ -203,5 +230,5 @@ class VectorStore:
         }
 
 
-# Singleton instance
-vector_store = VectorStore()
+# Singleton instance with preload=True for faster first requests
+vector_store = VectorStore(preload=False)  # Will be initialized on app startup

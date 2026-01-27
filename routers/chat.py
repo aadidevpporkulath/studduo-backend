@@ -38,14 +38,18 @@ async def chat(
             user_id=current_user["uid"],
             query=request.message,
             conversation_id=request.conversation_id,
-            include_history=request.include_history
+            include_history=request.include_history,
+            prompt_type=request.prompt_type,
+            is_temporary=request.is_temporary
         )
 
         return ChatResponse(
             message=result["message"],
             conversation_id=result["conversation_id"],
             sources=[Source(**src) for src in result["sources"]],
-            follow_up_questions=result["follow_up_questions"]
+            follow_up_questions=result["follow_up_questions"],
+            prompt_type=result["prompt_type"],
+            is_temporary=result["is_temporary"]
         )
 
     except Exception as e:

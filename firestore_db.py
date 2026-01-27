@@ -24,7 +24,9 @@ class FirestoreDB:
     async def create_conversation(
         user_id: str,
         title: str,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        prompt_type: str = "explanation",
+        is_temporary: bool = False
     ) -> str:
         """Create a new conversation."""
         if not conversation_id:
@@ -34,6 +36,8 @@ class FirestoreDB:
             "id": conversation_id,
             "user_id": user_id,
             "title": title,
+            "prompt_type": prompt_type,
+            "is_temporary": is_temporary,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
             "message_count": 0,
@@ -183,6 +187,8 @@ class FirestoreDB:
                         "message_count": conv_data.get("message_count", 0),
                         "created_at": conv_data.get("created_at"),
                         "updated_at": conv_data.get("updated_at"),
+                        "prompt_type": conv_data.get("prompt_type", "explanation"),
+                        "is_temporary": conv_data.get("is_temporary", False),
                     })
 
                 return conversations
@@ -200,7 +206,9 @@ class FirestoreDB:
     async def get_or_create_conversation(
         user_id: str,
         conversation_id: Optional[str] = None,
-        query: str = None
+        query: str = None,
+        prompt_type: str = "explanation",
+        is_temporary: bool = False
     ) -> str:
         """Get existing conversation or create new one."""
         try:
@@ -218,7 +226,11 @@ class FirestoreDB:
 
                     if conv_doc.exists:
                         # Update updated_at
-                        conv_ref.update({"updated_at": datetime.utcnow()})
+                        update_payload = {"updated_at": datetime.utcnow()}
+                        if prompt_type:
+                            update_payload["prompt_type"] = prompt_type
+                        update_payload["is_temporary"] = is_temporary
+                        conv_ref.update(update_payload)
                         return conversation_id
 
                 # Create new conversation
@@ -230,6 +242,8 @@ class FirestoreDB:
                     "id": new_conv_id,
                     "user_id": user_id,
                     "title": title,
+                    "prompt_type": prompt_type,
+                    "is_temporary": is_temporary,
                     "created_at": datetime.utcnow(),
                     "updated_at": datetime.utcnow(),
                     "message_count": 0,

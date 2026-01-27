@@ -2,13 +2,13 @@ from typing import List, Dict, Any, Optional
 import re
 import logging
 from io import BytesIO
-from reportlab.lib.pagesizes import letter, A4
+from uuid import uuid4
+from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
-from datetime import datetime
+from reportlab.lib.enums import TA_CENTER
 
 import google.generativeai as genai
 
@@ -39,9 +39,22 @@ class ChatService:
         self,
         query: str,
         context: str,
-        conversation_history: List[ChatMessage] = None
+        conversation_history: List[ChatMessage] = None,
+        prompt_type: str = "explanation"
     ) -> str:
         """Create a teaching-focused prompt for the LLM."""
+
+        prompt_styles = {
+            "explanation": "Give a clear, steadily paced explanation that builds intuition.",
+            "plan": "Lay out a concise plan or set of steps the student can follow next.",
+            "example": "Provide a worked example that illustrates the idea without overlong setup.",
+            "summary": "Summarize the key points crisply; avoid new tangents.",
+            "problem_solving": "Show the reasoning path to solve the problem, step by step.",
+            "quiz": "Ask 2-3 short check-yourself questions with brief answers after each."
+        }
+
+        style_hint = prompt_styles.get(
+            prompt_type, prompt_styles["explanation"])
 
         history_text = ""
         if conversation_history and len(conversation_history) > 0:
@@ -67,6 +80,8 @@ When you explain:
 - Prefer plain language over technical jargon unless precision requires it.
 - Avoid sounding scripted, academic, or overly cheerful.
 
+Requested response style: {style_hint}
+
 Use the following information as authoritative context:
 {context}
 {history_text}
@@ -85,23 +100,57 @@ Aim for clarity, honesty, and flow over perfection."""
 
         return prompt
 
+    def _should_generate_follow_ups(self, query: str, response: str) -> bool:
+        """Determine if follow-up questions would be valuable."""
+        query_lower = query.lower().strip()
+        response_lower = response.lower()
+        
+        # Don't generate for greetings or casual exchanges
+        greetings = ['hi', 'hello', 'hey', 'thanks', 'thank you', 'bye', 'goodbye']
+        if any(query_lower.startswith(g) for g in greetings):
+            return False
+        
+        # Don't generate for very short queries (likely casual)
+        if len(query.split()) <= 3 and '?' not in query:
+            return False
+            
+        # Don't generate if response is very short (likely acknowledgement)
+        if len(response.split()) < 30:
+            return False
+            
+        # Don't generate for procedural/navigation questions
+        procedural_keywords = ['how do i', 'where can i', 'show me how', 'can you help', 'i need help with']
+        if any(kw in query_lower for kw in procedural_keywords):
+            return False
+        
+        # Don't generate if response indicates insufficient context
+        if any(phrase in response_lower for phrase in ['i don\'t have', 'no information', 'cannot find']):
+            return False
+            
+        return True
+
     def _generate_follow_up_questions(self, query: str, response: str) -> List[str]:
-        """Generate relevant follow-up questions."""
+        """Generate relevant follow-up questions only when contextually appropriate."""
         try:
+            # Check if follow-ups are needed
+            if not self._should_generate_follow_ups(query, response):
+                return []
+            
             # Create specific, topic-focused follow-up questions
-            prompt = f"""You are a smart tutor helping a student go deeper into a topic.
+            prompt = f"""Based on this educational exchange, suggest 2 direct follow-up questions that would help the student go deeper.
 
-The student asked: "{query}"
+Student asked: "{query}"
 
-Your response explained: "{response[:600]}..."
+You explained: "{response[:500]}..."
 
-Generate 2 great follow-up questions that:
-1. Explore a specific next step or deeper angle of the topic (not meta-questions)
-2. Are concrete and directly answerable (avoid asking about "process" or "learning style")
-3. Build naturally from what was explained
-4. Spark curiosity about the actual subject matter
+Generate exactly 2 follow-up questions that:
+- Explore a specific aspect or implication mentioned in the explanation
+- Are directly related to the core topic (not meta-questions about studying)
+- Can be answered with the available knowledge base
+- Build naturally on what was just covered
+- Are specific, not generic
 
-Just list them one per line with "?" at the end. No numbering."""
+Format: One question per line, no numbering, no extra text. Each line ends with '?'"""
 
             result = self.model.generate_content(prompt)
 
@@ -111,8 +160,18 @@ Just list them one per line with "?" at the end. No numbering."""
                     "Empty response when generating follow-up questions")
                 return []
 
-            questions = [q.strip()
-                         for q in result.text.strip().split('\n') if q.strip()]
+            # Parse and clean questions
+            questions = []
+            for line in result.text.strip().split('\n'):
+                q = line.strip()
+                # Remove numbering patterns like "1.", "1)", "Q1:", etc.
+                q = re.sub(r'^[0-9]+[.):]?\s*', '', q)
+                q = re.sub(r'^Q[0-9]+:?\s*', '', q, flags=re.IGNORECASE)
+                q = q.strip()
+                
+                if q and q.endswith('?') and len(q.split()) > 3:
+                    questions.append(q)
+                    
             return questions[:2]
         except Exception as e:
             logger.error(f"Error generating follow-up questions: {str(e)}")
@@ -163,12 +222,21 @@ Just list them one per line with "?" at the end. No numbering."""
         self,
         user_id: str,
         conversation_id: Optional[str] = None,
-        query: str = None
+        query: str = None,
+        prompt_type: str = "explanation",
+        is_temporary: bool = False
     ) -> str:
         """Create new conversation or update existing one in Firestore."""
         try:
+            if is_temporary:
+                return conversation_id or str(uuid4())
+
             return await firestore_db.get_or_create_conversation(
-                user_id, conversation_id, query
+                user_id=user_id,
+                conversation_id=conversation_id,
+                query=query,
+                prompt_type=prompt_type,
+                is_temporary=is_temporary
             )
         except Exception as e:
             logger.error(f"Error creating/updating conversation: {str(e)}")
@@ -179,7 +247,9 @@ Just list them one per line with "?" at the end. No numbering."""
         user_id: str,
         query: str,
         conversation_id: Optional[str] = None,
-        include_history: bool = True
+        include_history: bool = True,
+        prompt_type: str = "explanation",
+        is_temporary: bool = False
     ) -> Dict[str, Any]:
         """
         Process a chat query using RAG with Firestore storage.
@@ -194,23 +264,28 @@ Just list them one per line with "?" at the end. No numbering."""
             Dict containing response, sources, and conversation_id
         """
         try:
-            # Create or get conversation
+            # Create or get conversation (or a transient one)
             conversation_id = await self.create_or_update_conversation(
-                user_id, conversation_id, query
+                user_id=user_id,
+                conversation_id=conversation_id,
+                query=query,
+                prompt_type=prompt_type,
+                is_temporary=is_temporary
             )
 
-            # Get conversation history if requested
+            # Get conversation history if requested and persisted
             history = []
-            if include_history and conversation_id:
+            if include_history and conversation_id and not is_temporary:
                 history = await self.get_conversation_history(
                     user_id, conversation_id
                 )
 
-            # Save user message
-            await self.save_message(user_id, conversation_id, "user", query)
+            # Save user message when persistence is enabled
+            if not is_temporary:
+                await self.save_message(user_id, conversation_id, "user", query)
 
-            # Retrieve relevant documents
-            relevant_docs = vector_store.similarity_search(
+            # Retrieve relevant documents asynchronously
+            relevant_docs = await vector_store.similarity_search_async(
                 query, k=settings.top_k_results)
 
             # Build context from retrieved documents with better formatting
@@ -231,7 +306,9 @@ Just list them one per line with "?" at the end. No numbering."""
             context = "\n\n---\n\n".join(context_parts)
 
             # Create teaching prompt
-            prompt = self._create_teaching_prompt(query, context, history)
+            prompt = self._create_teaching_prompt(
+                query, context, history, prompt_type
+            )
 
             # Generate response
             logger.info(f"Generating response for query: {query[:50]}...")
@@ -268,7 +345,9 @@ Just list them one per line with "?" at the end. No numbering."""
                         "message": friendly_message,
                         "conversation_id": conversation_id,
                         "sources": [],
-                        "follow_up_questions": []
+                        "follow_up_questions": [],
+                        "prompt_type": prompt_type,
+                        "is_temporary": is_temporary
                     }
                 # For other model errors (e.g., 404 if model unavailable), surface a friendly message
                 if "404" in err_text:
@@ -276,7 +355,9 @@ Just list them one per line with "?" at the end. No numbering."""
                         "message": "The selected model is unavailable right now. Please try again shortly.",
                         "conversation_id": conversation_id,
                         "sources": [],
-                        "follow_up_questions": []
+                        "follow_up_questions": [],
+                        "prompt_type": prompt_type,
+                        "is_temporary": is_temporary
                     }
                 # Unknown error -> re-raise to be handled upstream
                 raise
@@ -304,9 +385,10 @@ Just list them one per line with "?" at the end. No numbering."""
                     })
 
             # Save assistant message
-            await self.save_message(
-                user_id, conversation_id, "assistant", assistant_message, sources
-            )
+            if not is_temporary:
+                await self.save_message(
+                    user_id, conversation_id, "assistant", assistant_message, sources
+                )
 
             # Generate follow-up questions
             follow_up_questions = self._generate_follow_up_questions(
@@ -316,7 +398,9 @@ Just list them one per line with "?" at the end. No numbering."""
                 "message": assistant_message,
                 "conversation_id": conversation_id,
                 "sources": sources,
-                "follow_up_questions": follow_up_questions
+                "follow_up_questions": follow_up_questions,
+                "prompt_type": prompt_type,
+                "is_temporary": is_temporary
             }
 
         except Exception as e:
