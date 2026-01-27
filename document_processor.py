@@ -21,6 +21,8 @@ class DocumentProcessor:
     def __init__(self):
         self.chunk_size = settings.chunk_size
         self.chunk_overlap = settings.chunk_overlap
+        self.ocr_dpi = getattr(settings, "ocr_dpi", 200)
+        self.ocr_grayscale = getattr(settings, "ocr_grayscale", True)
 
         # Set Tesseract path for Windows
         if os.path.exists(settings.tesseract_cmd):
@@ -71,14 +73,33 @@ class DocumentProcessor:
         """Perform OCR on scanned PDF."""
         text = ""
         try:
-            # Convert PDF pages to images
-            images = convert_from_path(pdf_path, dpi=300)
+            reader = PdfReader(pdf_path)
+            total_pages = len(reader.pages)
 
-            for i, image in enumerate(images):
-                # Perform OCR on each page
+            for page_index in range(total_pages):
+                # Convert one page at a time to avoid loading the whole PDF into memory
+                images = convert_from_path(
+                    pdf_path,
+                    dpi=self.ocr_dpi,
+                    first_page=page_index + 1,
+                    last_page=page_index + 1,
+                    grayscale=self.ocr_grayscale,
+                )
+
+                if not images:
+                    logger.warning(
+                        f"No image produced for page {page_index + 1} of {pdf_path}")
+                    continue
+
+                image = images[0]
                 page_text = pytesseract.image_to_string(image, lang='eng')
-                text += f"\n\n--- Page {i+1} ---\n\n{page_text}"
-                logger.info(f"OCR completed for page {i+1} of {pdf_path}")
+                text += f"\n\n--- Page {page_index + 1} ---\n\n{page_text}"
+
+                # Explicitly release memory for this page
+                image.close()
+                del image
+                logger.info(
+                    f"OCR completed for page {page_index + 1} of {pdf_path} ({page_index + 1}/{total_pages})")
 
         except Exception as e:
             logger.error(f"OCR failed for {pdf_path}: {str(e)}")

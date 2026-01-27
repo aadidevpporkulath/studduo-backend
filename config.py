@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     # PDF Processing
     knowledge_dir: str = "./knowledge"
     tesseract_cmd: str = "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+    ocr_dpi: int = 200
+    ocr_grayscale: bool = True
 
     # RAG Settings
     chunk_size: int = 1000
