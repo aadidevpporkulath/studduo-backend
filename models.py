@@ -18,6 +18,8 @@ class ChatMessageWithSources(BaseModel):
     sources: List[Dict[str, Any]] = Field(
         default_factory=list, description="Source documents used")
 
+    model_config = {"populate_by_name": True}
+
 
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""

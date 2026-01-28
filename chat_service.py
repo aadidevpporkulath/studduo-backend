@@ -192,15 +192,23 @@ Format: One question per line, no numbering, no extra text. Each line ends with 
                 user_id, conversation_id, limit
             )
 
-            return [
-                ChatMessageWithSources(
-                    role=msg["role"],
-                    content=msg["content"],
-                    timestamp=msg.get("timestamp"),
-                    sources=msg.get("sources", [])
+            result = []
+            for msg in messages:
+                # Ensure sources field exists, even for old messages
+                sources = msg.get("sources")
+                if sources is None:
+                    sources = []
+
+                result.append(
+                    ChatMessageWithSources(
+                        role=msg["role"],
+                        content=msg["content"],
+                        timestamp=msg.get("timestamp"),
+                        sources=sources
+                    )
                 )
-                for msg in messages
-            ]
+
+            return result
         except Exception as e:
             logger.error(f"Error retrieving conversation history: {str(e)}")
             return []
