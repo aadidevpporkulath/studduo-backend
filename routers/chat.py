@@ -8,6 +8,7 @@ from models import (
     ChatRequest,
     ChatResponse,
     ConversationSummary,
+    ConversationMessagesResponse,
     Source,
     UpdateTitleRequest,
     UpdateTitleResponse,
@@ -121,13 +122,13 @@ async def search_conversations(
         )
 
 
-@router.get("/conversations/{conversation_id}/messages")
+@router.get("/conversations/{conversation_id}/messages", response_model=ConversationMessagesResponse)
 async def get_conversation_messages(
     conversation_id: str,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get all messages in a specific conversation.
+    Get all messages in a specific conversation with sources.
 
     - **conversation_id**: The ID of the conversation
     """
@@ -138,7 +139,10 @@ async def get_conversation_messages(
             limit=100
         )
 
-        return {"conversation_id": conversation_id, "messages": messages}
+        return ConversationMessagesResponse(
+            conversation_id=conversation_id,
+            messages=messages
+        )
 
     except Exception as e:
         raise HTTPException(

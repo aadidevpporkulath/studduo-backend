@@ -15,7 +15,7 @@ import google.generativeai as genai
 from config import settings
 from vector_store import vector_store
 from firestore_db import firestore_db
-from models import ChatMessage
+from models import ChatMessage, ChatMessageWithSources
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -185,18 +185,19 @@ Format: One question per line, no numbering, no extra text. Each line ends with 
         user_id: str,
         conversation_id: str,
         limit: int = 10
-    ) -> List[ChatMessage]:
-        """Retrieve conversation history from Firestore."""
+    ) -> List[ChatMessageWithSources]:
+        """Retrieve conversation history from Firestore with sources."""
         try:
             messages = await firestore_db.get_conversation_messages(
                 user_id, conversation_id, limit
             )
 
             return [
-                ChatMessage(
+                ChatMessageWithSources(
                     role=msg["role"],
                     content=msg["content"],
-                    timestamp=msg.get("timestamp")
+                    timestamp=msg.get("timestamp"),
+                    sources=msg.get("sources", [])
                 )
                 for msg in messages
             ]

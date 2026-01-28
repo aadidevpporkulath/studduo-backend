@@ -10,6 +10,15 @@ class ChatMessage(BaseModel):
     timestamp: Optional[datetime] = None
 
 
+class ChatMessageWithSources(BaseModel):
+    """Chat message with sources."""
+    role: str = Field(..., description="Role: 'user' or 'assistant'")
+    content: str = Field(..., description="Message content")
+    timestamp: Optional[datetime] = None
+    sources: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Source documents used")
+
+
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
     message: str = Field(..., min_length=1,
@@ -129,3 +138,9 @@ class MessageFeedbackResponse(BaseModel):
     status: str
     message: str
     feedback: str
+
+
+class ConversationMessagesResponse(BaseModel):
+    """Response containing conversation messages with sources."""
+    conversation_id: str
+    messages: List[ChatMessageWithSources]
