@@ -32,9 +32,9 @@ async def lifespan(app: FastAPI):
     logger.info(f"Vector store directory: {settings.chroma_persist_dir}")
     logger.info(f"Knowledge directory: {settings.knowledge_dir}")
     logger.info("API startup complete - Ready for requests!")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down StudduoAI API...")
 
@@ -50,7 +50,8 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.origins_list,
+    # allow_origins=settings.origins_list,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
