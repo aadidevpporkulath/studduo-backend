@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from typing import List
 
 from auth import get_current_user
@@ -316,4 +316,42 @@ async def export_conversation_pdf(
         raise HTTPException(
             status_code=500,
             detail=f"Error exporting conversation: {str(e)}"
+        )
+
+
+@router.get("/sources/{source_filename}/download")
+async def download_source_pdf(
+    source_filename: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Download a source PDF file.
+
+    - **source_filename**: The name of the source PDF file to download
+    """
+    try:
+        # Get the file path for the source PDF
+        file_path = await chat_service.get_source_pdf_path(source_filename)
+
+        if not file_path:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Source PDF not found: {source_filename}"
+            )
+
+        # Return the file as a streaming response
+        return FileResponse(
+            path=file_path,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename={source_filename}"
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error downloading source: {str(e)}"
         )

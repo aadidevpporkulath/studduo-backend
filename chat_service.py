@@ -103,6 +103,92 @@ Aim for clarity, honesty, and flow over perfection."""
 
         return prompt
 
+    def _deduplicate_sources(self, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Remove duplicate sources, keeping the one with highest relevance score."""
+        seen = {}
+        for source in sources:
+            source_name = source.get('source', '')
+            if source_name not in seen:
+                seen[source_name] = source
+            else:
+                # Keep the source with higher relevance score
+                if source.get('relevance_score', 0) > seen[source_name].get('relevance_score', 0):
+                    seen[source_name] = source
+        return list(seen.values())
+
+    def _is_sources_used_in_response(self, context: str, response: str, query: str) -> bool:
+        """Determine if sources were meaningfully used in the response."""
+        # If context is empty, sources weren't available
+        if not context or context.strip() == "":
+            return False
+
+        # If response indicates no information from materials, sources weren't used
+        no_info_phrases = [
+            "i don't have",
+            "not available in",
+            "not found in the provided",
+            "not in the course materials",
+            "this information is not in the materials",
+            "cannot find this",
+            "i cannot answer",
+            "outside the scope of the provided materials"
+        ]
+
+        response_lower = response.lower()
+        if any(phrase in response_lower for phrase in no_info_phrases):
+            return False
+
+        # If response is just a greeting or casual chat, sources weren't used
+        casual_indicators = [
+            response_lower.startswith("hi "),
+            response_lower.startswith("hello "),
+            response_lower.startswith("hey "),
+            len(response.split()) < 15 and response_lower in [
+                "thanks", "thank you", "ok", "okay", "sure", "no problem", "sounds good"
+            ]
+        ]
+        if any(casual_indicators):
+            return False
+
+        return True
+
+    def _is_out_of_topic(self, context: str, query: str, response: str) -> bool:
+        """Detect if the question is out-of-topic based on available context and response."""
+        # If no context is available, the question is likely out-of-topic
+        if not context or context.strip() == "":
+            return True
+
+        # Check if response indicates the question is out-of-topic
+        out_of_scope_phrases = [
+            "not covered in the course materials",
+            "outside the scope of the provided materials",
+            "not in the course materials",
+            "not available in the materials",
+            "this topic is not covered",
+            "beyond the scope of",
+            "not part of the course"
+        ]
+
+        response_lower = response.lower()
+
+        # If response explicitly mentions being out-of-scope, it's out-of-topic
+        if any(phrase in response_lower for phrase in out_of_scope_phrases):
+            return True
+
+        # If there's very little content relative to query length and response is defensive
+        if len(response) < 50 and len(query) > 20:
+            defensive_phrases = [
+                "i cannot",
+                "i'm not able to",
+                "that's not",
+                "sorry",
+                "unfortunately"
+            ]
+            if any(phrase in response_lower for phrase in defensive_phrases):
+                return True
+
+        return False
+
     def _should_generate_follow_ups(self, query: str, response: str) -> bool:
         """Determine if follow-up questions would be valuable."""
         query_lower = query.lower().strip()
@@ -317,6 +403,10 @@ Format: One question per line, no numbering, no extra text. Each line ends with 
             # Build context - can be empty if no relevant docs found
             context = "\n\n---\n\n".join(context_parts)
 
+            # Check if this is an out-of-topic question early
+            is_likely_out_of_topic = len(
+                context_parts) == 0 or context.strip() == ""
+
             # Create teaching prompt
             prompt = self._create_teaching_prompt(
                 query, context, history, prompt_type
@@ -384,9 +474,31 @@ Format: One question per line, no numbering, no extra text. Each line ends with 
                 raise ValueError(
                     "Response message is empty after stripping whitespace")
 
+            # Check if question is out-of-topic and respond accordingly
+            if self._is_out_of_topic(context, query, assistant_message):
+                out_of_topic_message = (
+                    "I appreciate the question, but this topic is not covered in the available course materials. "
+                    "I can only help with questions related to the course content. "
+                    "Feel free to ask about topics covered in the course materials!"
+                )
+
+                if not is_temporary:
+                    await self.save_message(
+                        user_id, conversation_id, "assistant", out_of_topic_message, []
+                    )
+
+                return {
+                    "message": out_of_topic_message,
+                    "conversation_id": conversation_id,
+                    "sources": [],
+                    "follow_up_questions": [],
+                    "prompt_type": prompt_type,
+                    "is_temporary": is_temporary
+                }
+
             # Prepare sources with better metadata and safer extraction
             sources = []
-            for doc in relevant_docs[:3]:  # Top 3 sources
+            for doc in relevant_docs:  # Process all docs to find unique sources
                 metadata = doc.get('metadata', {})
                 # Only add source if we have the required fields
                 if metadata.get('source'):
@@ -395,6 +507,13 @@ Format: One question per line, no numbering, no extra text. Each line ends with 
                         "chunk_id": metadata.get('chunk_id', -1),
                         "relevance_score": round(1 - doc.get('distance', 0), 2) if doc.get('distance') is not None else 0.95
                     })
+
+            # Deduplicate sources and keep top 3 unique ones
+            sources = self._deduplicate_sources(sources)[:3]
+
+            # Only include sources if they were actually used in the response
+            if not self._is_sources_used_in_response(context, assistant_message, query):
+                sources = []
 
             # Save assistant message
             if not is_temporary:
@@ -600,6 +719,32 @@ Format: One question per line, no numbering, no extra text. Each line ends with 
         except Exception as e:
             logger.error(f"Error generating PDF: {str(e)}")
             raise
+
+    async def get_source_pdf_path(self, source_filename: str) -> Optional[str]:
+        """Get the file path for a source PDF by filename."""
+        try:
+            from pathlib import Path
+            from config import settings
+
+            # Search in the knowledge directory
+            knowledge_dir = Path(settings.knowledge_dir)
+
+            # First try exact match
+            pdf_path = knowledge_dir / source_filename
+            if pdf_path.exists() and pdf_path.suffix.lower() == '.pdf':
+                return str(pdf_path)
+
+            # If no exact match, search case-insensitively
+            for pdf_file in knowledge_dir.glob("*.pdf"):
+                if pdf_file.name.lower() == source_filename.lower():
+                    return str(pdf_file)
+
+            logger.warning(f"Source PDF not found: {source_filename}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding source PDF: {str(e)}")
+            return None
 
 
 # Singleton instance
