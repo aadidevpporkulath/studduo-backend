@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     # API Settings
     app_env: str = "development"
     api_port: int = 8000
-    allowed_origins: str = "http://localhost:3000,http://localhost:5173"
+    allowed_origins: str = "capacitor://localhost,ionic://localhost,http://localhost,http://localhost:3000,http://localhost:5173"
 
     # Google Gemini
     google_api_key: str
