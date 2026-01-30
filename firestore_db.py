@@ -235,8 +235,8 @@ class FirestoreDB:
 
                 # Create new conversation
                 new_conv_id = str(uuid.uuid4())
-                title = query[:50] + "..." if query and len(
-                    query) > 50 else query or "New Conversation"
+                # Use a placeholder title that will be replaced after generating the response
+                title = "New Conversation"
 
                 new_conv_data = {
                     "id": new_conv_id,

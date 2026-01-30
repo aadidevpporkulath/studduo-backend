@@ -46,38 +46,3 @@ async def get_stats():
             detail=f"Error retrieving stats: {str(e)}"
         )
 
-
-@router.post("/test-chat", response_model=ChatResponse)
-async def test_chat(request: ChatRequest):
-    """
-    Test chat endpoint WITHOUT authentication (for development/testing only).
-
-    ⚠️ REMOVE THIS IN PRODUCTION - Use /api/chat/ with auth instead!
-
-    This is just for testing the chatbot without setting up Firebase auth.
-    """
-    try:
-        # Use a test user ID
-        result = await chat_service.chat(
-            user_id="test-user",
-            query=request.message,
-            conversation_id=request.conversation_id,
-            include_history=request.include_history,
-            prompt_type=request.prompt_type,
-            is_temporary=request.is_temporary
-        )
-
-        return ChatResponse(
-            message=result["message"],
-            conversation_id=result["conversation_id"],
-            sources=[Source(**src) for src in result["sources"]],
-            follow_up_questions=result["follow_up_questions"],
-            prompt_type=result["prompt_type"],
-            is_temporary=result["is_temporary"]
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing chat: {str(e)}"
-        )

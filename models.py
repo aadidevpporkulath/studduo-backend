@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -120,6 +120,14 @@ class SearchResponse(BaseModel):
 class UpdateTitleRequest(BaseModel):
     """Request to update conversation title."""
     title: str = Field(..., min_length=1, max_length=200)
+
+    @field_validator('title')
+    @classmethod
+    def title_not_empty(cls, v: str) -> str:
+        """Validate that title is not empty after stripping."""
+        if not v.strip():
+            raise ValueError('Title cannot be empty or whitespace-only')
+        return v.strip()
 
 
 class UpdateTitleResponse(BaseModel):

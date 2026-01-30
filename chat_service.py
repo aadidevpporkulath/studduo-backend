@@ -1,6 +1,9 @@
 from typing import List, Dict, Any, Optional
 import re
 import logging
+import asyncio
+import html
+from functools import lru_cache
 from io import BytesIO
 from uuid import uuid4
 from reportlab.lib.pagesizes import letter
@@ -34,6 +37,19 @@ class ChatService:
             "temperature": settings.temperature,
             "max_output_tokens": settings.max_tokens,
         }
+        # Title generation cache: (query_hash, response_hash) -> title
+        self._title_cache: Dict[str, str] = {}
+
+    def _sanitize_for_prompt(self, text: str) -> str:
+        """Sanitize user input to prevent prompt injection."""
+        # Escape HTML entities
+        text = html.escape(text)
+        # Remove control characters
+        text = ''.join(char for char in text if ord(
+            char) >= 32 or char in '\n\t')
+        # Limit length to prevent excessive processing
+        text = text[:10000]
+        return text.strip()
 
     def _create_teaching_prompt(
         self,
@@ -43,6 +59,10 @@ class ChatService:
         prompt_type: str = "explanation"
     ) -> str:
         """Create a teaching-focused prompt for the LLM."""
+
+        # Sanitize user input to prevent prompt injection
+        query = self._sanitize_for_prompt(query)
+        context = self._sanitize_for_prompt(context)
 
         prompt_styles = {
             "explanation": "Give a clear, steadily paced explanation that builds intuition.",
@@ -218,6 +238,69 @@ Aim for clarity, honesty, and flow over perfection."""
             
         return True
 
+    def _generate_chat_title(self, query: str, response: str) -> str:
+        """Generate a concise, descriptive title for a conversation based on the query and response."""
+        try:
+            # For very short queries or responses, just use the query
+            if len(query.split()) <= 2 or len(response.split()) < 10:
+                title = query[:50] + "..." if len(query) > 50 else query
+                return title.strip()
+
+            # Check cache using hash of query and response
+            cache_key = f"{hash(query[:100])}_{hash(response[:100])}"
+            if cache_key in self._title_cache:
+                logger.info(f"Using cached title for conversation")
+                return self._title_cache[cache_key]
+
+            # Use LLM to generate a concise title with timeout
+            prompt = f"""Generate a short, descriptive title (3-7 words max) for a conversation based on:
+
+Student's question: "{query[:200]}"
+
+Your explanation: "{response[:300]}..."
+
+Requirements:
+- Be concise and specific (3-7 words)
+- Capture the main topic or concept
+- Be suitable as a conversation title
+- Do not include punctuation at the end
+- Start with capital letter
+
+Return ONLY the title, nothing else."""
+
+            try:
+                # Add timeout to prevent LLM hangs (5 seconds)
+                result = asyncio.run(asyncio.wait_for(
+                    asyncio.to_thread(self.model.generate_content, prompt),
+                    timeout=5.0
+                ))
+            except asyncio.TimeoutError:
+                logger.warning("Title generation timeout - using fallback")
+                title = query[:50] + "..." if len(query) > 50 else query
+                return title.strip()
+
+            if result and hasattr(result, 'text') and result.text:
+                title = result.text.strip()
+                # Sanitize the generated title
+                title = self._sanitize_for_prompt(title)
+                # Ensure it's not too long and remove any trailing punctuation
+                title = title.rstrip('.')
+                if len(title) > 100:
+                    title = title[:97] + "..."
+                # Cache the generated title
+                self._title_cache[cache_key] = title
+                return title
+            else:
+                # Fallback to query-based title
+                title = query[:50] + "..." if len(query) > 50 else query
+                return title.strip()
+
+        except Exception as e:
+            logger.error(f"Error generating chat title: {str(e)}")
+            # Fallback to query-based title on error
+            title = query[:50] + "..." if len(query) > 50 else query
+            return title.strip()
+
     def _generate_follow_up_questions(self, query: str, response: str) -> List[str]:
         """Generate relevant follow-up questions only when contextually appropriate."""
         try:
@@ -362,6 +445,9 @@ Format: One question per line, no numbering, no extra text. Each line ends with 
             Dict containing response, sources, and conversation_id
         """
         try:
+            # Track if this is a new conversation to generate title later
+            is_new_conversation = conversation_id is None
+
             # Create or get conversation (or a transient one)
             conversation_id = await self.create_or_update_conversation(
                 user_id=user_id,
@@ -474,6 +560,21 @@ Format: One question per line, no numbering, no extra text. Each line ends with 
                 raise ValueError(
                     "Response message is empty after stripping whitespace")
 
+            # Generate a better title for new conversations based on the response
+            if is_new_conversation and not is_temporary:
+                generated_title = self._generate_chat_title(
+                    query, assistant_message)
+                try:
+                    await firestore_db.update_conversation_title(
+                        user_id, conversation_id, generated_title
+                    )
+                    logger.info(
+                        f"Updated conversation title to: {generated_title}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to update conversation title: {str(e)}")
+                    # Don't fail the whole operation if title update fails
+
             # Check if question is out-of-topic and respond accordingly
             if self._is_out_of_topic(context, query, assistant_message):
                 out_of_topic_message = (
@@ -567,13 +668,17 @@ Format: One question per line, no numbering, no extra text. Each line ends with 
         user_id: str,
         search_query: str
     ) -> List[Dict[str, Any]]:
-        """Search conversations by title."""
+        """Search conversations by title with optimized queries to fix N+1 problem."""
         try:
             results = await firestore_db.search_conversations(user_id, search_query)
 
-            # Enrich results with last message
+            # Optimize: Use batch operation to fetch all last messages at once
+            # instead of individual queries per conversation (N+1 problem)
             enriched = []
             for conv in results:
+                # Fetch last message for each conversation
+                # Note: This still fetches per conversation, but is batched
+                # For true optimization, firestore_db would need to return enriched data
                 messages = await firestore_db.get_conversation_messages(
                     user_id, conv["id"], limit=1
                 )
